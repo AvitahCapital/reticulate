@@ -224,6 +224,7 @@ r_to_py.data.frame <- function(x, convert = FALSE) {
 
 }
 
+#' @importFrom dplyr as_tibble
 #' @export
 py_to_r.pandas.core.frame.DataFrame <- function(x) {
   disable_conversion_scope(x)
@@ -303,17 +304,17 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
           attr(converted, "tzone") <- zone
       }
 
-      rownames(df) <- converted
+      df[[py_to_r(x$index$name)]] <- converted
     }
 
     else {
       converted <- tryCatch(py_to_r(index$values), error = identity)
       if (is.character(converted) || is.numeric(converted))
-        rownames(df) <- converted
+        df[[py_to_r(x$index$name)]] <- converted
     }
   }
 
-  df
+  as_tibble(df[c(py_to_r(x$index$name), columns)])
 
 }
 
