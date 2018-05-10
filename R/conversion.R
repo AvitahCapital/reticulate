@@ -287,9 +287,11 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   index_name <- py_to_r(index$name)
   if(is.null(index_name))
     index_name <- 'index'
-  if (inherits(index, "pandas.core.indexes.base.Index")) {
+  if (inherits(index, c("pandas.core.indexes.base.Index",
+                        "pandas.indexes.base.Index"))) {
 
-    if (inherits(index, "pandas.core.indexes.range.RangeIndex") &&
+    if (inherits(index, c("pandas.core.indexes.range.RangeIndex",
+                          "pandas.indexes.range.RangeIndex")) &&
         np$issubdtype(index$dtype, np$number))
     {
       # check for a range index from 0 -> n. in such a case, we don't need
@@ -306,7 +308,8 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
       }
     }
 
-    else if (inherits(index, "pandas.core.indexes.datetimes.DatetimeIndex")) {
+    else if (inherits(index, c("pandas.core.indexes.datetimes.DatetimeIndex",
+                               "pandas.tseries.index.DatetimeIndex"))) {
 
       converted <- tryCatch(py_to_r(index$values), error = identity)
 
