@@ -252,7 +252,7 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     }
 
     #convert date columns
-    if('Timestamp' %in% class(converted[[i]][[1]]))
+    if(any(grepl('Timestamp', class(converted[[i]][[1]]))))
       converted[[i]] <- as.POSIXct(py_to_r(x$`__getitem__`(column)$astype('str')), format="%Y-%m-%d %H:%M:%S")
 
     #convert date columns
