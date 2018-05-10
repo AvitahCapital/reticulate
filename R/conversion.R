@@ -230,11 +230,15 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   disable_conversion_scope(x)
 
   np <- import("numpy", convert = TRUE)
+  pd <- import("pandas", convert = FALSE)
 
   # extract numpy arrays associated with each column
   columns <- py_to_r(x$columns$values)
   converted <- lapply(columns, function(column) {
-    py_to_r(x$`__getitem__`(column)$as_matrix())
+    out <- py_to_r(x$`__getitem__`(column)$as_matrix())
+    if(any(grepl('pandas', class(out))))
+      out <- py_to_r(x$`__getitem__`(column)$values)
+    out
   })
   names(converted) <- columns
 
@@ -246,6 +250,14 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     if (identical(dim(converted[[i]]), length(converted[[i]]))) {
       dim(converted[[i]]) <- NULL
     }
+
+    #convert date columns
+    if('datetime.date' %in% class(converted[[i]][[1]]))
+      converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')))
+
+    #set bad datetimes to nan
+    if('POSIXct' %in% class(converted[[i]]))
+      converted[[i]] <- as.POSIXct(ifelse(converted[[i]] >= '1900-01-01', converted[[i]], NA), origin='1970-01-01')
 
     # convert categorical variables to factors
     if (identical(py_to_r(x$`__getitem__`(column)$dtype$name), "category")) {
@@ -272,6 +284,9 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   # try to explicitly whitelist a small family which we can represent
   # effectively in R
   index <- x$index
+  index_name <- py_to_r(index$name)
+  if(is.null(index_name))
+    index_name <- 'index'
   if (inherits(index, "pandas.core.indexes.base.Index")) {
 
     if (inherits(index, "pandas.core.indexes.range.RangeIndex") &&
@@ -304,17 +319,24 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
           attr(converted, "tzone") <- zone
       }
 
-      df[[py_to_r(x$index$name)]] <- converted
+      df[[index_name]] <- converted
     }
 
     else {
       converted <- tryCatch(py_to_r(index$values), error = identity)
       if (is.character(converted) || is.numeric(converted))
-        df[[py_to_r(x$index$name)]] <- converted
+        row.names(df) <- converted
     }
   }
 
-  as_tibble(df[c(py_to_r(x$index$name), columns)])
+  #don't want any lists in the dataframe
+  is_list <- names(df)[sapply(df, function(x) class(x)[1]) == 'list']
+  for(col in is_list)
+  {
+    df[[col]] <- sapply(df[[col]], function(x) if(is.null(x)) NA else x)
+  }
+
+  as_tibble(df[c(py_to_r(index$name), columns)])
 
 }
 
