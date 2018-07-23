@@ -252,11 +252,11 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     }
 
     #convert date columns
-    if(any(grepl('Timestamp', class(converted[[i]][[1]]))))
+    if(length(converted[[i]]) && any(grepl('Timestamp', class(converted[[i]][[1]]))))
       converted[[i]] <- as.POSIXct(py_to_r(x$`__getitem__`(column)$astype('str')), format="%Y-%m-%d %H:%M:%S")
 
     #convert date columns
-    if('datetime.date' %in% class(converted[[i]][[1]]))
+    if(length(converted[[i]]) && 'datetime.date' %in% class(converted[[i]][[1]]))
       converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')))
 
     #set bad datetimes to nan
@@ -343,8 +343,9 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     df[[col]] <- sapply(df[[col]], function(x) if(is.null(x)) NA else x)
   }
 
-  as_tibble(df[c(py_to_r(index$name), columns)])
-
+  cols <- c(py_to_r(index$name), columns)
+  cols <- cols[cols %in% names(df)]
+  as_tibble(df[cols])
 }
 
 #' @export
