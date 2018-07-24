@@ -65,14 +65,20 @@ repl_python <- function(
   globals <- py_run_string("globals()")
 
   # check to see if the current environment supports history
-  has_history <- tryCatch(
-    { utils::savehistory(tempfile()); TRUE },
-    error = function(e) FALSE
-  )
+  # (check for case where working directory not writable)
+  use_history <-
+    !"--vanilla" %in% commandArgs() &&
+    !"--no-save" %in% commandArgs() &&
+    !is.null(getwd()) &&
+    tryCatch(
+      { utils::savehistory(tempfile()); TRUE },
+      error = function(e) FALSE
+    )
 
-  if (has_history) {
+  if (use_history) {
 
-    # if we have history, save and then restore the current R history
+    # if we have history, save and then restore the current
+    # R history
     utils::savehistory()
     on.exit(utils::loadhistory(), add = TRUE)
 
@@ -81,7 +87,7 @@ repl_python <- function(
     if (is.null(histfile))
       histfile <- file.path(tempdir(), ".reticulatehistory")
 
-    # load history (create emptu file if none exists yet)
+    # load history (create empty file if none exists yet)
     if (!file.exists(histfile))
       file.create(histfile)
     utils::loadhistory(histfile)
@@ -212,7 +218,7 @@ repl_python <- function(
     }
 
     # update history file
-    if (has_history) {
+    if (use_history) {
       write(contents, file = histfile, append = TRUE)
       utils::loadhistory(histfile)
     }
@@ -276,7 +282,10 @@ repl_python <- function(
       sep = "."
     )
 
-    executable <- sys$executable
+    # NOTE: we used to use sys.executable but that would report
+    # the R process rather than the Python process
+    config <- py_config()
+    executable <- config$python
 
     fmt <- c(
       "Python %s (%s)",
@@ -293,10 +302,6 @@ repl_python <- function(
     message(msg)
 
   }
-
-  # allow for interacting with R session
-  eng_python_synchronize_before(globalenv())
-  on.exit(eng_python_synchronize_after(), add = TRUE)
 
   # enter the REPL loop
   repeat {

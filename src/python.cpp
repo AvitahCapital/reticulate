@@ -136,7 +136,7 @@ std::string as_std_string(PyObject* str) {
 
   // conver to bytes if its unicode
   PyObjectPtr pStr;
-  if (PyUnicode_Check(str)) {
+  if (PyUnicode_Check(str) || isPyArrayScalar(str)) {
     str = PyUnicode_AsBytes(str);
     pStr.assign(str);
   }
@@ -153,13 +153,6 @@ std::string as_std_string(PyObject* str) {
 }
 
 #define as_utf8_r_string(str) Rcpp::String(as_std_string(str))
-
-PyObject* as_python_bytes(Rbyte* bytes, size_t len) {
-  if (is_python3())
-    return PyBytes_FromStringAndSize((const char*)bytes, len);
-  else
-    return PyString_FromStringAndSize((const char*)bytes, len);
-}
 
 PyObject* as_python_str(SEXP strSEXP) {
   if (is_python3()) {
@@ -192,6 +185,75 @@ bool has_null_bytes(PyObject* str) {
   }
 }
 
+// helpers to narrow python array type to something convertable from R,
+// guaranteed to return NPY_BOOL, NPY_LONG, NPY_DOUBLE, or NPY_CDOUBLE
+// (throws an exception if it's unable to return one of these types)
+int narrow_array_typenum(int typenum) {
+
+  switch(typenum) {
+  // logical
+  case NPY_BOOL:
+    typenum = NPY_BOOL;
+    break;
+    // integer
+  case NPY_BYTE:
+  case NPY_UBYTE:
+  case NPY_SHORT:
+  case NPY_USHORT:
+  case NPY_INT:
+    typenum = NPY_LONG;
+    break;
+    // double
+  case NPY_UINT:
+  case NPY_ULONG:
+  case NPY_ULONGLONG:
+  case NPY_LONG:
+  case NPY_LONGLONG:
+  case NPY_HALF:
+  case NPY_FLOAT:
+  case NPY_DOUBLE:
+    typenum = NPY_DOUBLE;
+    break;
+
+    // complex
+  case NPY_CFLOAT:
+  case NPY_CDOUBLE:
+    typenum = NPY_CDOUBLE;
+    break;
+
+
+    // string/object (leave these alone)
+  case NPY_STRING:
+  case NPY_UNICODE:
+  case NPY_OBJECT:
+    break;
+
+    // unsupported
+  default:
+    stop("Conversion from numpy array type %d is not supported", typenum);
+    break;
+  }
+
+  return typenum;
+}
+
+int narrow_array_typenum(PyArrayObject* array) {
+  return narrow_array_typenum(PyArray_TYPE(array));
+}
+
+int narrow_array_typenum(PyArray_Descr* descr) {
+  return narrow_array_typenum(descr->type_num);
+}
+
+bool is_numpy_str(PyObject* x) {
+  if (!isPyArrayScalar(x))
+    return false; // ndarray or other, not string
+
+  PyArray_DescrPtr descrPtr(PyArray_DescrFromScalar(x));
+  int typenum = narrow_array_typenum(descrPtr);
+  return (typenum == NPY_STRING || typenum == NPY_UNICODE);
+}
+
 bool is_python_str(PyObject* x) {
 
   if (PyUnicode_Check(x))
@@ -201,6 +263,9 @@ bool is_python_str(PyObject* x) {
   // python3 will get caught by PyUnicode_Check, we'll ignore
   // PyBytes entirely and let it remain a python object)
   else if (!is_python3() && PyString_Check(x) && !has_null_bytes(x))
+    return true;
+
+  else if (is_numpy_str(x))
     return true;
 
   else
@@ -219,16 +284,21 @@ PyObject* py_import(const std::string& module) {
 }
 
 std::string as_r_class(PyObject* classPtr) {
-  PyObjectPtr modulePtr(PyObject_GetAttrString(classPtr, "__module__"));
   PyObjectPtr namePtr(PyObject_GetAttrString(classPtr, "__name__"));
   std::ostringstream ostr;
-  std::string module = as_std_string(modulePtr) + ".";
-  std::string builtin("__builtin__");
-  if (module.find(builtin) == 0)
-    module.replace(0, builtin.length(), "python.builtin");
-  std::string builtins("builtins");
-  if (module.find(builtins) == 0)
-    module.replace(0, builtins.length(), "python.builtin");
+  std::string module;
+  if (PyObject_HasAttrString(classPtr, "__module__")) {
+    PyObjectPtr modulePtr(PyObject_GetAttrString(classPtr, "__module__"));
+    module = as_std_string(modulePtr) + ".";
+    std::string builtin("__builtin__");
+    if (module.find(builtin) == 0)
+      module.replace(0, builtin.length(), "python.builtin");
+    std::string builtins("builtins");
+    if (module.find(builtins) == 0)
+      module.replace(0, builtins.length(), "python.builtin");
+  } else {
+    module = "python.builtin.";
+  }
   ostr << module << as_std_string(namePtr);
   return ostr.str();
 }
@@ -511,67 +581,6 @@ CharacterVector py_tuple_to_character(PyObject* tuple) {
     vec[i] = as_utf8_r_string(PyTuple_GetItem(tuple, i));
   return vec;
 }
-
-// helpers to narrow python array type to something convertable from R,
-// guaranteed to return NPY_BOOL, NPY_LONG, NPY_DOUBLE, or NPY_CDOUBLE
-// (throws an exception if it's unable to return one of these types)
-int narrow_array_typenum(int typenum) {
-
-  switch(typenum) {
-  // logical
-  case NPY_BOOL:
-    typenum = NPY_BOOL;
-    break;
-    // integer
-  case NPY_BYTE:
-  case NPY_UBYTE:
-  case NPY_SHORT:
-  case NPY_USHORT:
-  case NPY_INT:
-    typenum = NPY_LONG;
-    break;
-    // double
-  case NPY_UINT:
-  case NPY_ULONG:
-  case NPY_ULONGLONG:
-  case NPY_LONG:
-  case NPY_LONGLONG:
-  case NPY_HALF:
-  case NPY_FLOAT:
-  case NPY_DOUBLE:
-    typenum = NPY_DOUBLE;
-    break;
-
-    // complex
-  case NPY_CFLOAT:
-  case NPY_CDOUBLE:
-    typenum = NPY_CDOUBLE;
-    break;
-
-
-    // string/object (leave these alone)
-  case NPY_STRING:
-  case NPY_UNICODE:
-  case NPY_OBJECT:
-    break;
-
-    // unsupported
-  default:
-    stop("Conversion from numpy array type %d is not supported", typenum);
-    break;
-  }
-
-  return typenum;
-}
-
-int narrow_array_typenum(PyArrayObject* array) {
-  return narrow_array_typenum(PyArray_TYPE(array));
-}
-
-int narrow_array_typenum(PyArray_Descr* descr) {
-  return narrow_array_typenum(descr->type_num);
-}
-
 
 void set_string_element(SEXP rArray, int i, PyObject* pyStr) {
   std::string str = as_std_string(pyStr);
@@ -915,6 +924,15 @@ SEXP py_to_r(PyObject* x, bool convert) {
     return py_ref(x, true, std::string("python.builtin.iterator"));
   }
 
+  // bytearray
+  else if (PyByteArray_Check(x)) {
+    if (PyByteArray_Size(x) > 0)
+      return Rcpp::RawVector(PyByteArray_AsString(x),
+                             PyByteArray_AsString(x) + PyByteArray_Size(x));
+    else
+      return Rcpp::RawVector();
+  }
+
   // default is to return opaque wrapper to python object. we pass convert = true
   // because if we hit this code then conversion has been either implicitly
   // or explicitly requested.
@@ -924,9 +942,30 @@ SEXP py_to_r(PyObject* x, bool convert) {
   }
 }
 
+PyObject* r_to_py(RObject x, bool convert) {
+
+  // get a static reference to the R version of r_to_py
+  Rcpp::Environment pkgEnv = Rcpp::Environment::namespace_env("reticulate");
+  Rcpp::Function r_to_py_fn = pkgEnv["r_to_py"];
+
+  // call the R version and hold the return value in a PyObjectRef (SEXP wrapper)
+  // this object will be released when the function returns
+  PyObjectRef ref(r_to_py_fn(x, convert));
+
+  // get the underlying Python object and call Py_IncRef before returning it
+  // this allows this function to provide the same memory sematnics as the
+  // previous C++ version of r_to_py (which is now r_to_py_cpp), which always
+  // calls Py_IncRef on Python objects before returning them
+  PyObject* obj = ref.get();
+  Py_IncRef(obj);
+
+  // return the Python object
+  return obj;
+}
+
 // convert an R object to a python object (the returned object
 // will have an active reference count on it)
-PyObject* r_to_py(RObject x, bool convert) {
+PyObject* r_to_py_cpp(RObject x, bool convert) {
 
   int type = x.sexp_type();
   SEXP sexp = x.get__();
@@ -939,7 +978,8 @@ PyObject* r_to_py(RObject x, bool convert) {
 
   // use py_object attribute if we have it
   } else if (x.hasAttribute("py_object")) {
-    PyObjectRef obj = as<PyObjectRef>(x.attr("py_object"));
+    Rcpp::RObject py_object = x.attr("py_object");
+    PyObjectRef obj = as<PyObjectRef>(py_object);
     Py_IncRef(obj.get());
     return obj.get();
 
@@ -984,6 +1024,21 @@ PyObject* r_to_py(RObject x, bool convert) {
            "converted");
     }
 
+    int flags = NPY_ARRAY_FARRAY_RO;
+
+    // because R logical vectors are just ints under the
+    // hood, we need to explicitly construct a boolean
+    // vector for our Python array. note that the created
+    // array will own the data so we do not free it after
+    if (typenum == NPY_BOOL) {
+      R_xlen_t n = XLENGTH(sexp);
+      bool* converted = (bool*) PyArray_malloc(n * sizeof(bool));
+      for (R_xlen_t i = 0; i < n; i++)
+        converted[i] = LOGICAL(sexp)[i];
+      data = converted;
+      flags |= NPY_ARRAY_OWNDATA;
+    }
+
     // create the matrix
     PyObject* array = PyArray_New(&PyArray_Type,
                                    nd,
@@ -992,7 +1047,7 @@ PyObject* r_to_py(RObject x, bool convert) {
                                    NULL,
                                    data,
                                    0,
-                                   NPY_ARRAY_FARRAY_RO,
+                                   flags,
                                    NULL);
 
     // check for error
@@ -1115,7 +1170,11 @@ PyObject* r_to_py(RObject x, bool convert) {
   // bytes
   } else if (type == RAWSXP) {
 
-    return as_python_bytes(RAW(sexp), Rf_length(sexp));
+    Rcpp::RawVector raw(sexp);
+    if (raw.size() > 0)
+      return PyByteArray_FromStringAndSize((const char*)&raw[0], raw.size());
+    else
+      return PyByteArray_FromStringAndSize(NULL, 0);
 
   // list
   } else if (type == VECSXP) {
@@ -1179,7 +1238,7 @@ PyObject* r_to_py(RObject x, bool convert) {
 
 // [[Rcpp::export]]
 PyObjectRef r_to_py_impl(RObject object, bool convert) {
-  return py_ref(r_to_py(object, convert), convert);
+  return py_ref(r_to_py_cpp(object, convert), convert);
 }
 
 // custom module used for calling R functions from python wrappers
@@ -1888,7 +1947,8 @@ PyObjectRef py_module_import(const std::string& module, bool convert) {
 // [[Rcpp::export]]
 void py_module_proxy_import(PyObjectRef proxy) {
   if (proxy.exists("module")) {
-    std::string module = as<std::string>(proxy.getFromEnvironment("module"));
+    Rcpp::RObject r_module = proxy.getFromEnvironment("module");
+    std::string module = as<std::string>(r_module);
     PyObject* pModule = py_import(module);
     if (pModule == NULL)
       stop(py_fetch_error());

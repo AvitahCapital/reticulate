@@ -120,6 +120,7 @@ LIBPYTHON_EXTERN PyObject* Py_Float;
 LIBPYTHON_EXTERN PyObject* Py_List;
 LIBPYTHON_EXTERN PyObject* Py_Tuple;
 LIBPYTHON_EXTERN PyObject* Py_Complex;
+LIBPYTHON_EXTERN PyObject* Py_ByteArray;
 LIBPYTHON_EXTERN PyObject* PyExc_KeyboardInterrupt;
 
 void initialize_type_objects(bool python3);
@@ -137,6 +138,7 @@ void initialize_type_objects(bool python3);
 #define PyTuple_Check(o) (Py_TYPE(o) == Py_TYPE(Py_Tuple))
 #define PyList_Check(o) (Py_TYPE(o) == Py_TYPE(Py_List))
 #define PyComplex_Check(o) (Py_TYPE(o) == Py_TYPE(Py_Complex))
+#define PyByteArray_Check(o) (Py_TYPE(o) == Py_TYPE(Py_ByteArray))
 
 LIBPYTHON_EXTERN void (*Py_Initialize)();
 LIBPYTHON_EXTERN int (*Py_IsInitialized)();
@@ -221,6 +223,9 @@ LIBPYTHON_EXTERN PyObject* (*PyUnicode_AsMBCSString)(PyObject *unicode);
 #endif
 
 LIBPYTHON_EXTERN PyObject* (*PyBytes_FromStringAndSize)(const char *, Py_ssize_t);
+LIBPYTHON_EXTERN Py_ssize_t (*PyByteArray_Size)(PyObject *bytearray);
+LIBPYTHON_EXTERN PyObject* (*PyByteArray_FromStringAndSize)(const char *string, Py_ssize_t len);
+LIBPYTHON_EXTERN char* (*PyByteArray_AsString)(PyObject *bytearray);
 LIBPYTHON_EXTERN PyObject* (*PyUnicode_FromString)(const char *u);
 
 LIBPYTHON_EXTERN void (*PyErr_Fetch)(PyObject **, PyObject **, PyObject **);
@@ -436,6 +441,19 @@ LIBPYTHON_EXTERN void **PyArray_API;
          (*(int (*)(PyObject *, void *, PyArray_Descr *)) \
             PyArray_API[63])
 
+// NOTE: PyArray_Malloc has a bit of indirection for different
+// versions of Python, but the underlying intention is to
+// always use the system allocator (through malloc). See:
+//
+// https://github.com/numpy/numpy/blob/f5758d6fe15c2b506290bfc5379a10027617b331/numpy/core/include/numpy/ndarraytypes.h#L348-L367
+// https://github.com/python/cpython/blob/28f713601d3ec80820e842dcb25a234093f1ff18/Objects/obmalloc.c#L66-L76
+//
+#ifdef __cplusplus
+#define PyArray_malloc std::malloc
+#else
+#define PyArray_malloc malloc
+#endif
+
 #define PyArray_New                                                                                          \
           (*(PyObject * (*)(PyTypeObject *, int, npy_intp *, int, npy_intp *, void *, int, int, PyObject *)) \
              PyArray_API[93])
@@ -480,6 +498,7 @@ bool import_numpy_api(bool python3, std::string* pError);
 
 #define NPY_ARRAY_C_CONTIGUOUS    0x0001
 #define NPY_ARRAY_F_CONTIGUOUS    0x0002
+#define NPY_ARRAY_OWNDATA         0x0004
 #define NPY_ARRAY_ALIGNED         0x0100
 #define NPY_ARRAY_FARRAY_RO    (NPY_ARRAY_F_CONTIGUOUS | NPY_ARRAY_ALIGNED)
 #define NPY_ARRAY_CARRAY_RO    (NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED)
@@ -487,6 +506,7 @@ bool import_numpy_api(bool python3, std::string* pError);
 #define NPY_ARRAY_WRITEABLE       0x0400
 #define NPY_ARRAY_BEHAVED      (NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE)
 #define NPY_ARRAY_FARRAY       (NPY_ARRAY_F_CONTIGUOUS | NPY_ARRAY_BEHAVED)
+
 
 class SharedLibrary {
 

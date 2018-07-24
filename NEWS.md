@@ -1,14 +1,62 @@
 
-## reticulate 1.8 (development)
+## reticulate 1.10 (development)
 
 Install the development version with: `install_github("rstudio/reticulate")`
+
+- Output is now properly displayed when using the `reticulate` REPL with
+  Windows + Python 2.7.
+
+- Address memory protection issues identified by rchk
+
+- Make variables defined using `%as%` operator in `with()` available after 
+  execution of the with block (same behavior as Python).
+  
+- Check for presence of "__module__" property before reading in `as_r_class()`
+
+- Only update pip in `virtualenv_install()` when version is < 8.1
+
+- Support converting Python `OrderedDict` to R
+
+- Support for iterating all types of Python iterable
+
+
+## reticulate 1.9 (CRAN)
+
+- Detect python 3 in environments where there is no python 2 (e.g. Ubuntu 18.04)
+
+- Always call r_to_py S3 method when converting objects from Python to R
+
+- Handle NULL module name when determining R class for Python objects
+
+- Convert RAW vectors to Python bytearray; Convert Python bytearray to RAW
+
+- Use importlib for detecting modules (rather than imp) for Python >= 3.4
+
+- Close text connection used for reading Python configuration probe
+
+
+## reticulate 1.8
+
+- `source_python()` now flushes stdout and stderr after running the associated
+  Python script, to ensure that `print()`-ed output is output to the console.
+  (#284)
+
+- Fixed an issue where logical R matrices would not be converted correctly to
+  their NumPy counterpart. (#280)
+
+- Fixed an issue where Python chunks containing multiple statements on the same
+  line would be evaluated and printed multiple times.
+
+- Added `py_get_item()`, `py_set_item()`, and `py_del_item()` as lower-level
+  APIs for directly accessing the items of e.g. a Python dictionary or a Pandas
+  DataFrame.
 
 - Fix issue with Pandas column names that clash with built in methods (e.g. 'pop')
 
 - Improve default `str()` output for Python objects (print `__dict__` if available)
 
 
-## reticulate 1.7 (CRAN)
+## reticulate 1.7
 
 - Improved filtering of non-numeric characters in Python / NumPy versions.
 

@@ -153,11 +153,32 @@ py_to_r.datetime.date <- function(x) {
 }
 
 
+#' @export
+py_to_r.collections.OrderedDict <- function(x) {
+  keys <- names(x)
+  names(keys) <- keys
+  lapply(keys, function(key) {
+    x[[key]]
+  })
+}
+
 
 #' @export
 py_to_r.pandas.core.series.Series <- function(x) {
   disable_conversion_scope(x)
-  py_to_r(x$as_matrix())
+  values <- py_to_r(x$values)
+  index <- py_to_r(x$index)
+  names(values) <- index$format()
+  values
+}
+
+#' @export
+py_to_r.pandas.core.categorical.Categorical <- function(x) {
+  disable_conversion_scope(x)
+  values <- py_to_r(x$get_values())
+  levels <- py_to_r(x$categories$values)
+  ordered <- py_to_r(x$dtype$ordered)
+  factor(values, levels = levels, ordered = ordered)
 }
 
 py_object_shape <- function(object) unlist(as_r_value(object$shape))
@@ -233,14 +254,12 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   pd <- import("pandas", convert = FALSE)
 
   # extract numpy arrays associated with each column
-  columns <- py_to_r(x$columns$values)
-  converted <- lapply(columns, function(column) {
-    out <- py_to_r(x$`__getitem__`(column)$as_matrix())
-    if(any(grepl('pandas', class(out))))
-      out <- py_to_r(x$`__getitem__`(column)$values)
-    out
+  columns <- x$columns$values
+  converted <- lapply(seq_along(columns) - 1L, function(i) {
+    column <- columns[[i]]
+    py_to_r(py_get_item(x, column)$values)
   })
-  names(converted) <- columns
+  names(converted) <- py_to_r(x$columns$format())
 
   # clean up converted objects
   for (i in seq_along(converted)) {
@@ -251,31 +270,12 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
       dim(converted[[i]]) <- NULL
     }
 
-    #convert date columns
-    if(length(converted[[i]]) && any(grepl('Timestamp', class(converted[[i]][[1]]))))
-      converted[[i]] <- as.POSIXct(py_to_r(x$`__getitem__`(column)$astype('str')), format="%Y-%m-%d %H:%M:%S")
-
-    #convert date columns
-    if(length(converted[[i]]) && 'datetime.date' %in% class(converted[[i]][[1]]))
-      converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')))
-
     #set bad datetimes to nan
     if('POSIXct' %in% class(converted[[i]]))
       converted[[i]] <- as.POSIXct(ifelse(converted[[i]] >= '1900-01-01', converted[[i]], NA), origin='1970-01-01')
-
-    # convert categorical variables to factors
-    if (identical(py_to_r(x$`__getitem__`(column)$dtype$name), "category")) {
-      levels <- py_to_r(x$`__getitem__`(column)$values$categories$values)
-      ordered <- py_to_r(x$`__getitem__`(column)$dtype$ordered)
-      converted[[i]] <- factor(converted[[i]], levels = levels, ordered = ordered)
-    }
-
   }
 
-  # re-order based on ordering of pandas DataFrame. note that
-  # as.data.frame() will not handle list columns correctly, so
-  # we construct the data.frame 'by hand'
-  df <- converted[columns]
+  df <- converted
   class(df) <- "data.frame"
   attr(df, "row.names") <- c(NA_integer_, -nrow(x))
 
@@ -291,6 +291,12 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   index_name <- py_to_r(index$name)
   if(is.null(index_name))
     index_name <- 'index'
+
+  # tag the returned object with the Python index, in case
+  # the user needs to explicitly access / munge the index
+  # for some need
+  attr(df, "pandas.index") <- index
+
   if (inherits(index, c("pandas.core.indexes.base.Index",
                         "pandas.indexes.base.Index"))) {
 
@@ -331,8 +337,13 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
 
     else {
       converted <- tryCatch(py_to_r(index$values), error = identity)
-      if (is.character(converted) || is.numeric(converted))
-        row.names(df) <- converted
+      if (is.character(converted) || is.numeric(converted)) {
+        if (any(duplicated(converted))) {
+          warning("index contains duplicated values: row names not set")
+        } else {
+          rownames(df) <- converted
+        }
+      }
     }
   }
 
@@ -343,7 +354,7 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     df[[col]] <- sapply(df[[col]], function(x) if(is.null(x)) NA else x)
   }
 
-  cols <- c(py_to_r(index$name), columns)
+  cols <- c(py_to_r(index$name), py_to_r(columns))
   cols <- cols[cols %in% names(df)]
   as_tibble(df[cols])
 }

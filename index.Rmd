@@ -30,7 +30,7 @@ Reticulate embeds a Python session within your R session, enabling seamless, hig
 
 Install the **reticulate** package from CRAN as follows:
 
-``` r
+```r
 install.packages("reticulate")
 ```
 

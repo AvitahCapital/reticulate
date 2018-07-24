@@ -77,6 +77,30 @@ virtualenv_install <- function(envname, packages, ignore_installed = FALSE) {
   virtualenv_path <- file.path(config$root, envname)
   virtualenv_bin <- function(bin) path.expand(file.path(virtualenv_path, "bin", bin))
 
+  # see what version of pip is installed (assume 0.1 on error)
+  installed_pip_version <- function() {
+    tryCatch({
+      # check existing version
+      cmd <- sprintf("%ssource %s && %s --version%s",
+                     ifelse(is_osx(), "", "/bin/bash -c \""),
+                     shQuote(path.expand(virtualenv_bin("activate"))),
+                     shQuote(path.expand(virtualenv_bin(config$pip_version))),
+                     ifelse(is_osx(), "", "\""))
+      result <- system(cmd, intern = TRUE, ignore.stderr = TRUE)
+
+      # parse result
+      matches <- regexec("^[^ ]+\\s+(\\d+)\\.(\\d+).*$", result)
+      matches <- regmatches(result, matches)[[1]]
+
+      # return as R numeric version
+      numeric_version(paste(matches[[2]], matches[[3]], sep = "."))
+
+    }, error = function(e) {
+      warning("Error occurred checking pip version: ", e$message)
+      numeric_version("0.1")
+    })
+  }
+
   # function to call pip within virtual env
   pip_install <- function(packages, message, ignore_installed_package) {
     cmd <- sprintf("%ssource %s && %s install %s --upgrade %s%s",
@@ -93,14 +117,12 @@ virtualenv_install <- function(envname, packages, ignore_installed = FALSE) {
     invisible(NULL)
   }
 
-  # upgrade pip so it can find tensorflow
-  pip_install("pip", "Upgrading pip", TRUE)
-
-  # install updated version of the wheel package
-  pip_install("wheel", "Upgrading wheel", TRUE)
-
-  # upgrade setuptools so it can use wheels
-  pip_install("setuptools", "Upgrading setuptools", TRUE)
+  # upgrade pip and related utilities if its older than 8.1
+  if (installed_pip_version() < "8.1") {
+    pip_install("pip", "Upgrading pip", TRUE)
+    pip_install("wheel", "Upgrading wheel", TRUE)
+    pip_install("setuptools", "Upgrading setuptools", TRUE)
+  }
 
   # install packages
   pip_install(packages, "Installing packages", ignore_installed)
@@ -166,12 +188,20 @@ virtualenv_config <- function() {
   }
 
   # find system python binary
+  pyver <- ""
   python <- python_unix_binary("python")
-  if (is.null(python))
-    stop("Unable to locate Python on this system.", call. = FALSE)
+  if (is.null(python)) {
+    # try for python3 if we are on linux
+    if (is_linux()) {
+      python <- python_unix_binary("python3")
+      if (is.null(python))
+        stop("Unable to locate Python on this system.", call. = FALSE)
+      pyver <- "3"
+    }
+  }
 
   # find required binaries
-  pip <- python_unix_binary("pip")
+  pip <- python_unix_binary(paste0("pip", pyver))
   have_pip <- !is.null(pip)
   virtualenv <- python_unix_binary("virtualenv")
   have_virtualenv <- !is.null(virtualenv)
@@ -189,14 +219,18 @@ virtualenv_config <- function() {
     if (!is.null(install_commands))
       install_commands <- paste(install_commands, collapse = "\n")
   } else if (is_ubuntu()) {
-    if (!have_pip)
-      install_commands <- c(install_commands, "python-pip")
-    if (!have_virtualenv)
-      install_commands <- c(install_commands, "python-virtualenv")
-    if (!is.null(install_commands)) {
-      install_commands <- paste("$ sudo apt-get install",
-                                paste(install_commands, collapse = " "))
+    if (!have_pip) {
+      install_commands <- c(install_commands, paste0("$ sudo apt-get install python", pyver ,"-pip"))
+      pip <- paste0("/usr/bin/pip", pyver)
     }
+    if (!have_virtualenv) {
+      if (identical(pyver, "3"))
+        install_commands <- c(install_commands, paste("$ sudo", pip, "install virtualenv"))
+      else
+        install_commands <- c(install_commands, "$ sudo apt-get install python-virtualenv")
+    }
+    if (!is.null(install_commands))
+      install_commands <- paste(install_commands, collapse = "\n")
   } else {
     if (!have_pip)
       install_commands <- c(install_commands, "pip")

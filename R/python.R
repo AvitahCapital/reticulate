@@ -220,9 +220,28 @@ py_has_convert <- function(x) {
     TRUE
 }
 
-#' @export
-`$.python.builtin.object` <- function(x, name) {
+py_maybe_convert <- function(x, convert) {
+  if (convert || py_is_callable(x)) {
 
+    # capture previous convert for attr
+    attrib_convert <- py_has_convert(x)
+
+    # temporarily change convert so we can call py_to_r and get S3 dispatch
+    envir <- as.environment(x)
+    assign("convert", convert, envir = envir)
+    on.exit(assign("convert", attrib_convert, envir = envir), add = TRUE)
+
+    # call py_to_r
+    x <- py_to_r(x)
+  }
+
+  x
+}
+
+# helper function for accessing attributes or items from a
+# Python object, after validating that we do indeed have
+# a valid Python object reference
+py_get_attr_or_item <- function(x, name, prefer_attr) {
   # resolve module proxies
   if (py_is_module_proxy(x))
     py_resolve_module_proxy(x)
@@ -231,41 +250,60 @@ py_has_convert <- function(x) {
   if (py_is_null_xptr(x) || !py_available())
     return(NULL)
 
-  # deterimine whether this object converts to python
-  convert <- py_has_convert(x)
-
   # special handling for embedded modules (which don't always show
   # up as "attributes")
   if (py_is_module(x) && !py_has_attr(x, name)) {
-    module <- py_get_submodule(x, name, convert)
+    module <- py_get_submodule(x, name, py_has_convert(x))
     if (!is.null(module))
       return(module)
   }
 
-  # get the attrib
-  if (is.numeric(name) && (length(name) == 1) && py_has_attr(x, "__getitem__"))
-    attrib <- x$`__getitem__`(as.integer(name))
-  else if (inherits(x, "python.builtin.dict"))
-    attrib <- py_dict_get_item(x, name)
-  else
-    attrib <- py_get_attr(x, name)
+  # re-cast numeric values as integers
+  if (is.numeric(name))
+    name <- as.integer(name)
 
-  # convert
-  if (convert || py_is_callable(attrib)) {
-
-    # capture previous convert for attr
-    attrib_convert <- py_has_convert(attrib)
-
-    # temporarily change convert so we can call py_to_r and get S3 dispatch
-    envir <- as.environment(attrib)
-    assign("convert", convert, envir = envir)
-    on.exit(assign("convert", attrib_convert, envir = envir), add = TRUE)
-
-    # call py_to_r
-    py_to_r(attrib)
+  # attributes must always be indexed by strings, so if
+  # we receive a non-string 'name', we call py_get_item
+  if (!is.character(name)) {
+    item <- py_get_item(x, name)
+    return(py_maybe_convert(item, py_has_convert(x)))
   }
-  else
-    attrib
+
+  # get the attrib and convert as needed
+  if (prefer_attr) {
+    object <- py_get_attr(x, name)
+  } else {
+
+    # if we have an attribute, attempt to get the item
+    # but allow for fallback to that attribute
+    if (py_has_attr(x, name)) {
+      object <- py_get_item(x, name, silent = TRUE)
+      if (is.null(object))
+        object <- py_get_attr(x, name)
+    } else {
+      # we don't have an attribute; only attempt item
+      # access and allow normal error propagation
+      object <- py_get_item(x, name)
+    }
+
+  }
+
+  py_maybe_convert(object, py_has_convert(x))
+}
+
+#' @export
+`$.python.builtin.object` <- function(x, name) {
+  py_get_attr_or_item(x, name, TRUE)
+}
+
+#' @export
+`[.python.builtin.object` <- function(x, name) {
+  py_get_attr_or_item(x, name, FALSE)
+}
+
+#' @export
+`[[.python.builtin.object` <- function(x, name) {
+  py_get_attr_or_item(x, name, FALSE)
 }
 
 
@@ -300,28 +338,6 @@ as.environment.python.builtin.object <- function(x) {
 
 #' @export
 `[[<-.python.builtin.object` <- `$<-.python.builtin.object`
-
-
-#' @export
-`$<-.python.builtin.dict` <- function(x, name, value) {
-  if (!py_is_null_xptr(x) && py_available())
-    py_dict_set_item(x, name, value)
-  else
-    stop("Unable to assign value (dict reference is NULL)")
-  x
-}
-
-#' @export
-`[[<-.python.builtin.dict` <- `$<-.python.builtin.dict`
-
-#' @export
-length.python.builtin.dict <- function(x) {
-  if (py_is_null_xptr(x) || !py_available())
-    0L
-  else
-    py_dict_length(x)
-}
-
 
 
 #' @export
@@ -630,10 +646,7 @@ with.python.builtin.object <- function(data, expr, as = NULL, ...) {
     envir <- parent.frame()
 
   # assign the context if we have an as parameter
-  asRestore <- NULL
   if (!is.null(as)) {
-    if (exists(as, envir = envir))
-      asRestore <- get(as, envir = envir)
     assign(as, context, envir = envir)
   }
 
@@ -641,11 +654,6 @@ with.python.builtin.object <- function(data, expr, as = NULL, ...) {
   tryCatch(force(expr),
            finally = {
              data$`__exit__`(NULL, NULL, NULL)
-             if (!is.null(as)) {
-               remove(list = as, envir = envir)
-               if (!is.null(asRestore))
-                 assign(as, asRestore, envir = envir)
-             }
            }
           )
 }
@@ -670,6 +678,7 @@ with.python.builtin.object <- function(data, expr, as = NULL, ...) {
 
 #' Traverse a Python iterator or generator
 #'
+#' @param x Python iterator or iterable
 #' @param it Python iterator or generator
 #' @param f Function to apply to each item. By default applies the
 #'   \code{identity} function which just reflects back the value of the item.
@@ -690,9 +699,8 @@ iterate <- function(it, f = base::identity, simplify = TRUE) {
 
   ensure_python_initialized()
 
-  # validate
-  if (!inherits(it, "python.builtin.iterator"))
-    stop("iterate function called with non-iterator argument")
+  # resolve iterator
+  it <- as_iterator(it)
 
   # perform iteration
   result <- py_iterate(it, f)
@@ -721,20 +729,30 @@ iterate <- function(it, f = base::identity, simplify = TRUE) {
 }
 
 
-
-
 #' @rdname iterate
 #' @export
 iter_next <- function(it, completed = NULL) {
 
-  # validate
+  # check for iterator
   if (!inherits(it, "python.builtin.iterator"))
-    stop("iter_next function called with non-iterator argument")
+    stop("iterator function called with non-iterator argument", call. = FALSE)
 
   # call iterator
   py_iter_next(it, completed)
-
 }
+
+
+#' @rdname iterate
+#' @export
+as_iterator <- function(x) {
+  if (inherits(x, "python.builtin.iterator"))
+    x
+  else if (py_has_attr(x, "__iter__"))
+    x$`__iter__`()
+  else
+    stop("iterator function called with non-iterator argument", call. = FALSE)
+}
+
 
 #' Call a Python callable object
 #'
@@ -817,6 +835,94 @@ py_list_attributes <- function(x) {
 }
 
 
+
+#' Get an item from a Python object
+#'
+#' Retrieve an item from a Python object, similar to how
+#' \code{x[name]} might be used in Python code to access an
+#' item indexed by `key` on an object `x`. The object's
+#' `__getitem__` method will be called.
+#'
+#' @param x A Python object.
+#' @param key The key used for item lookup.
+#' @param silent Boolean; when \code{TRUE}, attempts to access
+#'   missing items will return \code{NULL} rather than
+#'   throw an error.
+#'
+#' @family item-related APIs
+#' @export
+py_get_item <- function(x, key, silent = FALSE) {
+  ensure_python_initialized()
+  if (py_is_module_proxy(x))
+    py_resolve_module_proxy(x)
+
+  if (!py_has_attr(x, "__getitem__"))
+    stop("Python object has no '__getitem__' method", call. = FALSE)
+  getitem <- py_to_r(py_get_attr(x, "__getitem__", silent = FALSE))
+
+  item <- if (silent)
+    tryCatch(getitem(key), error = function(e) NULL)
+  else
+    getitem(key)
+
+  item
+}
+
+#' Set an item for a Python object
+#'
+#' Set an item on a Python object, similar to how
+#' \code{x[name] = value} might be used in Python code to
+#' set an item called `name` with value `value` on object
+#' `x`. The object's `__setitem__` method will be called.
+#'
+#' @param x A Python object.
+#' @param name The item name.
+#' @param value The item value.
+#'
+#' @return The (mutated) object `x`, invisibly.
+#'
+#' @family item-related APIs
+#' @export
+py_set_item <- function(x, name, value) {
+  ensure_python_initialized()
+  if (py_is_module_proxy(x))
+    py_resolve_module_proxy(x)
+
+  if (!py_has_attr(x, "__setitem__"))
+    stop("Python object has no '__setitem__' method", call. = FALSE)
+  setitem <- py_to_r(py_get_attr(x, "__setitem__", silent = FALSE))
+
+  setitem(name, value)
+  invisible(x)
+}
+
+#' Delete / remove an item from a Python object
+#'
+#' Delete an item associated with a Python object, as
+#' through its `__delitem__` method.
+#'
+#' @param x A Python object.
+#' @param name The item name.
+#'
+#' @return The (mutated) object `x`, invisibly.
+#'
+#' @family item-related APIs
+#' @export
+py_del_item <- function(x, name) {
+  ensure_python_initialized()
+  if (py_is_module_proxy(x))
+    py_resolve_module_proxy(x)
+
+  if (!py_has_attr(x, "__delitem__"))
+    stop("Python object has no '__delitem__' method", call. = FALSE)
+  delitem <- py_to_r(py_get_attr(x, "__delitem__", silent = FALSE))
+
+  delitem(name)
+  invisible(x)
+}
+
+
+
 #' Unique identifer for Python object
 #'
 #' Get a globally unique identifer for a Python object.
@@ -865,7 +971,6 @@ py_str.default <- function(object, ...) {
 
 
 #' @export
-#' @importFrom utils capture.output
 py_str.python.builtin.object <- function(object, ...) {
 
   # get default rep
@@ -874,15 +979,14 @@ py_str.python.builtin.object <- function(object, ...) {
   # remove e.g. 'object at 0x10d084710'
   str <- gsub(" object at 0x\\w{4,}", "", str)
 
-  # if available, use __dict__ to list accessible attr
-  if (py_has_attr(object, "__dict__")) {
-    attr <- py_to_r(py_get_attr(object, "__dict__"))
-    attr <- capture.output(str(attr))
-    str <- c(str, attr)
-  }
-
   # return
   str
+}
+
+#' @export
+py_str.python.builtin.bytearray <- function(object, ...) {
+  builtins <- import_builtins()
+  paste0("python.builtin.bytearray (", builtins$len(object), " bytes)")
 }
 
 #' @export
@@ -1208,3 +1312,36 @@ py_filter_classes <- function(classes) {
   classes
 }
 
+py_inject_r <- function(envir) {
+
+  # define our 'R' class
+  py_run_string("class R(object): pass")
+
+  # extract it from the main module
+  main <- import_main(convert = FALSE)
+  R <- main$R
+
+  # extract active knit environment
+  if (is.null(envir)) {
+    .knitEnv <- yoink("knitr", ".knitEnv")
+    envir <- .knitEnv$knit_global
+  }
+
+  # define the getters, setters we'll attach to the Python class
+  getter <- function(self, code) {
+    r_to_py(eval(parse(text = as_r_value(code)), envir = envir))
+  }
+
+  setter <- function(self, name, value) {
+    envir[[as_r_value(name)]] <<- as_r_value(value)
+  }
+
+  py_set_attr(R, "__getattr__", getter)
+  py_set_attr(R, "__setattr__", setter)
+  py_set_attr(R, "__getitem__", getter)
+  py_set_attr(R, "__setitem__", setter)
+
+  # now define the R object
+  py_run_string("r = R()")
+
+}

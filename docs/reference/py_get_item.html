@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>R wrapper for Python objects — py_to_r_wrapper • reticulate</title>
+<title>Get an item from a Python object — py_get_item • reticulate</title>
 
 <!-- jquery -->
 <script src="https://code.jquery.com/jquery-3.1.0.min.js" integrity="sha384-nrOSfDHtoPMzJHjVTdCopGqIqeYETSXhZDFyniQ8ZHcVy08QesyHcnOUpMpqnmWq" crossorigin="anonymous"></script>
@@ -27,11 +27,12 @@
 <script src="../pkgdown.js"></script>
   <link href="../extra.css" rel="stylesheet">
   
-<meta property="og:title" content="R wrapper for Python objects — py_to_r_wrapper" />
+<meta property="og:title" content="Get an item from a Python object — py_get_item" />
 
-<meta property="og:description" content="S3 method to create a custom R wrapper for a Python object.
-The default wrapper is either an R environment or an R function
-(for callable python objects)." />
+<meta property="og:description" content="Retrieve an item from a Python object, similar to how
+x[name] might be used in Python code to access an
+item indexed by key on an object x. The object's
+__getitem__ method will be called." />
 <meta name="twitter:card" content="summary" />
 
 
@@ -132,26 +133,42 @@ The default wrapper is either an R environment or an R function
       <div class="row">
   <div class="col-md-9 contents">
     <div class="page-header">
-    <h1>R wrapper for Python objects</h1>
-    <small>Source: <a href='https://github.com/rstudio/reticulate/blob/master/R/conversion.R'><code>R/conversion.R</code></a></small>
+    <h1>Get an item from a Python object</h1>
+    <small>Source: <a href='https://github.com/rstudio/reticulate/blob/master/R/python.R'><code>R/python.R</code></a></small>
     </div>
 
     
-    <p>S3 method to create a custom R wrapper for a Python object.
-The default wrapper is either an R environment or an R function
-(for callable python objects).</p>
+    <p>Retrieve an item from a Python object, similar to how
+<code>x[name]</code> might be used in Python code to access an
+item indexed by <code>key</code> on an object <code>x</code>. The object's
+<code>__getitem__</code> method will be called.</p>
     
 
-    <pre class="usage"><span class='fu'>py_to_r_wrapper</span>(<span class='no'>x</span>)</pre>
+    <pre class="usage"><span class='fu'>py_get_item</span>(<span class='no'>x</span>, <span class='no'>key</span>, <span class='kw'>silent</span> <span class='kw'>=</span> <span class='fl'>FALSE</span>)</pre>
     
     <h2 class="hasAnchor" id="arguments"><a class="anchor" href="#arguments"></a>Arguments</h2>
     <table class="ref-arguments">
     <colgroup><col class="name" /><col class="desc" /></colgroup>
     <tr>
       <th>x</th>
-      <td><p>Python object</p></td>
+      <td><p>A Python object.</p></td>
+    </tr>
+    <tr>
+      <th>key</th>
+      <td><p>The key used for item lookup.</p></td>
+    </tr>
+    <tr>
+      <th>silent</th>
+      <td><p>Boolean; when <code>TRUE</code>, attempts to access
+missing items will return <code>NULL</code> rather than
+throw an error.</p></td>
     </tr>
     </table>
+    
+    <h2 class="hasAnchor" id="see-also"><a class="anchor" href="#see-also"></a>See also</h2>
+
+    <p>Other item-related APIs: <code><a href='py_del_item.html'>py_del_item</a></code>,
+  <code><a href='py_set_item.html'>py_set_item</a></code></p>
     
 
   </div>
@@ -159,7 +176,9 @@ The default wrapper is either an R environment or an R function
     <h2>Contents</h2>
     <ul class="nav nav-pills nav-stacked">
       <li><a href="#arguments">Arguments</a></li>
-                </ul>
+      
+      <li><a href="#see-also">See also</a></li>
+          </ul>
 
   </div>
 </div>
