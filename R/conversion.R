@@ -354,7 +354,7 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
     df[[col]] <- sapply(df[[col]], function(x) if(is.null(x)) NA else x)
   }
 
-  cols <- c(py_to_r(index$name), py_to_r(columns))
+  cols <- c(py_to_r(index$name), unlist(py_to_r(columns)))
   cols <- cols[cols %in% names(df)]
   as_tibble(df[cols])
 }
