@@ -35,7 +35,7 @@ workflow\!
 
 Install the **reticulate** package from CRAN as follows:
 
-``` r
+```r
 install.packages("reticulate")
 ```
 

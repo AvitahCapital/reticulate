@@ -193,6 +193,17 @@ conda_version <- function(conda = "auto") {
   system2(conda_bin, "--version", stdout = TRUE)
 }
 
+#' @rdname conda-tools
+#' @export
+conda_python <- function(envname, conda = "auto") {
+  conda_envs <- conda_list(conda = conda)
+  env <- subset(conda_envs, conda_envs$name == envname)
+  if (nrow(env) > 0)
+    path.expand(env$python[[1]])
+  else
+    stop("conda environment ", envname, " not found")
+}
+
 
 
 find_conda <- function() {
