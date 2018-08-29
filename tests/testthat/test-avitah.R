@@ -15,4 +15,11 @@ test_that("we can convert a 0 row dataframe from python to r", {
   expect_equal(nrow(zero_rows), 0)
 })
 
+test_that("date column is converted", {
+  skip_if_no_python()
 
+  pd <- import('pandas', convert=FALSE)
+  pydf <- pd$DataFrame(list(date=pd$DatetimeIndex(pd$date_range('2016-01-01', '2016-01-03'))$date))
+  df <- py_to_r(pydf)
+  expect_true(class(df$date)[1] == 'Date')
+})
