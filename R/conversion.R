@@ -265,6 +265,10 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
   for (i in seq_along(converted)) {
     column <- names(converted)[[i]]
 
+    #convert date columns
+    if(length(converted[[i]]) && 'datetime.date' %in% class(converted[[i]][[1]]))
+      converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')))
+
     # drop 1D dimensions
     if (identical(dim(converted[[i]]), length(converted[[i]]))) {
       dim(converted[[i]]) <- NULL
