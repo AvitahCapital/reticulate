@@ -23,3 +23,11 @@ test_that("date column is converted", {
   df <- py_to_r(pydf)
   expect_true(class(df$date)[1] == 'Date')
 })
+
+test_that("we can convert a 1 row dataframe from R to python", {
+  tw <- structure(list(`2019-05-30` = NaN, date = "2019-05-30", path = 0,
+                       id = "ecop"), .Names = c("2019-05-30", "date", "path", "id"
+                       ), row.names = "2019-05-30", class = "data.frame")
+  out <- r_to_py(tw)
+  expect_s3_class(out, "pandas.core.frame.DataFrame")
+})

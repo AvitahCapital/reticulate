@@ -235,7 +235,11 @@ r_to_py.data.frame <- function(x, convert = FALSE) {
   # copy over row names if they exist
   rni <- .row_names_info(x, type = 0L)
   if (is.character(rni))
+  {
+    if(length(rni)==1)
+      rni <- pd$Index(list(rni))
     pdf$index <- rni
+  }
 
   # re-order based on original columns
   if (length(x) > 1)
