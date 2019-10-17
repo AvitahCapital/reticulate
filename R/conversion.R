@@ -271,7 +271,7 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
 
     #convert date columns
     if(length(converted[[i]]) && 'datetime.date' %in% class(converted[[i]][[1]]))
-      converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')))
+      converted[[i]] <- as.Date(py_to_r(x$`__getitem__`(column)$astype('str')), format='%Y-%m-%d')
 
     # drop 1D dimensions
     if (identical(dim(converted[[i]]), length(converted[[i]]))) {
