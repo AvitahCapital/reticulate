@@ -1,12 +1,170 @@
 
-## reticulate 1.11 (development)
+## reticulate 1.14 (UNDER DEVELOPMENT)
 
-Install the development version with: `devtools::install_github("rstudio/reticulate")`
+Install the development version of reticulate with `remotes::install_github("rstudio/reticulate")`.
 
-- Use "agg" matplotlib backend when running under RStudio Desktop
+- `reticulate` now more consistently normalizes the paths reported by
+  `py_config()`. (#609)
 
+- `reticulate` now provides a mechanism for allowing client packages to declare
+  their Python package dependencies. Packages should declare the Python packages
+  they require as part of the `reticulate@R` field in their `DESCRIPTION` file.
+  Currently, this only activated when using Miniconda; as the assumption is that
+  users will otherwise prefer to manually manage their Python environments.
+  Please see `vignette("python_dependencies")` for more details.
+  
+- `reticulate` will now prompt the user to create and use a
+  [Miniconda](https://docs.conda.io/en/latest/miniconda.html) environment
+  when no other suitable Python environment has already been requested. This
+  should help ease some of the trouble in setting up a Python environment on
+  different platforms. The installer code was contributed by @hafen, from the
+  [rminiconda](https://github.com/hafen/rminiconda) package.
 
-## reticulate 1.10 (CRAN)
+- Fixed an issue where `virtualenv_create(..., python = "<python>")` could
+  fail to use the requested version of Python when `venv` is not installed.
+  (#399)
+
+- Fixed an issue where iterable Python objects could not be iterated with
+  `iter_next()` due to a missing class. (#603)
+
+- Fixed an issue where Conda environments could be mis-detected as
+  virtual environments.
+
+- R functions wrapping Python functions now inherit the formal arguments
+  as specified by Python, making autocompletion more reliable.
+  (#573, @flying-sheep)
+
+- Fixed an issue where attempts to query Conda for environments could fail
+  on Windows. (#576; #575; @dfalbel)
+
+- Properly check for NULL keyword arguments in `call_r_function()`.
+  (#562, @dfalbel)
+
+## reticulate 1.13 (CRAN)
+
+- Fixed an issue where subsetting with `[.python.builtin.object` could
+  fail when `convert = TRUE` is set on the associated Python object.
+  (#554)
+
+- Fixed an issue where the wrong definition of `[[.python.builtin.object`
+  was being exported. (#554)
+
+- `py_install()` now accepts `python_version`, and can be used
+  if a particular version of Python is required for a Conda
+  environment. (This argument is ignored for virtual environments.)
+  (#549)
+
+- Fixed an issue where reticulate could segfault in some cases
+  (e.g. when using the `iterate()` function). (#551)
+
+- It is now possible to compile `reticulate` with support for debug
+  versions of Python by setting the `RETICULATE_PYTHON_DEBUG` preprocessor
+  define during compilation. (#548)
+
+- reticulate now warns if it did not honor the user's request to load a
+  particular version of Python, as through e.g. `reticulate::use_python()`.
+  (#545)
+
+- `py_save_object()` and `py_load_object()` now accept `...` arguments. (#542)
+
+- `py_install()` has been revamped, and now better detects
+  available Python tooling (virtualenv vs. venv vs. Conda). (#544)
+
+- reticulate now flushes stdout / stderr after calls to `py_run_file()` and
+  `py_run_string()`.
+
+- Python tuples are now converted recursively, in the same way that Python
+  lists are. This means that the sub-elements of the tuple will be converted
+  to R objects when possible. (#525, @skeydan)
+
+- Python OrderedDict objects with non-string keys are now properly
+  converted to R. (#516)
+
+- Fixed an issue where reticulate could crash after a failed attempt
+  to load NumPy. (#497, @ecoughlan)
+
+## reticulate 1.12
+
+- Fixed an issue where Python objects within Python lists would not be
+  converted to R objects as expected.
+
+- Fixed an issue where single-row data.frames with row names could not
+  be converted. (#468)
+
+- Fixed an issue where `reticulate` could fail to query Anaconda environment
+  names with Anaconda 3.7.
+
+- Fixed an issue where vectors of R Dates were not converted correctly. (#454)
+
+- Fixed an issue where R Dates could not be passed to Python functions. (#458)
+
+## reticulate 1.11.1
+
+- Fixed a failing virtual environment test on CRAN.
+
+## reticulate 1.11
+
+- Fixed an issue where attempts to activate virtual environments created with
+  virtualenv 16.4.1 would fail. (#437)
+
+- Fixed an issue where conversion of Pandas Categorical variables to R objects
+  would fail. (#389)
+
+- Textual output generated when adding items to a matplotlib plot object
+  are now suppressed.
+
+- If the last statement in a Python chunk returns a matplotlib plot object,
+  the plot will now be auto-shown as in other environments.
+
+- The reticulate function help handler now returns function arguments for
+  Python builtin functions.
+
+- Top-level Python statements can now include leading indent when submitted
+  with `repl_python()`.
+
+- The current `matplotlib` figure is now cleared as each Python chunk in an
+  R Markdown document is run.
+
+- The `r` helper object (used for evaluating R code from Python) now better
+  handles conversion of R functions. (#383)
+
+- The `use_virtualenv()` function now understands how to bind to virtual
+  environments created by the Python `venv` module.
+  
+- Reticulate better handles conversions of R lists to Python, and similarly,
+  Python lists to R. We now call `r_to_py()` on each sub-element of an R list,
+  and similarly, `py_to_r()` on each sub-element of a Python list.
+
+- Reticulate now always converts R `Date` objects into Python `datetime`
+  objects. Note that these conversions can be inefficient -- if you would
+  prefer conversion to NumPy `datetime64` objects / arrays, you should convert
+  your date to `POSIXct` first.
+
+- Python chunks containing errors will cause execution to halt if 'error=FALSE'
+  during render, conforming with the default knitr behavior for R chunks.
+
+- The output of bare statements (e.g. `1 + 1`) is now emitted as output when using
+  the reticulate Python engine.
+
+- Remapping of Python output streams to be R can now be explicitly enabled
+  by setting the environment variable `RETICULATE_REMAP_OUTPUT_STREAMS` to 1. (#335)
+
+- Allow syntax errors in Python chunks with 'eval = FALSE' (#343)
+
+- Avoid dropping blank lines in Python chunks (#328)
+
+- Use "agg" matplotlib backend when running under RStudio Desktop (avoids
+  crashes when attempting to generate Python plots)
+
+- Add `as.character()` S3 method for Python bytes (defaults to converting using 
+  UTF-8 encoding)
+  
+- Add `py_main_thread_func()` for providing R callbacks to Python libraries that may
+  invoke the function on a Python background thread.
+
+- Add `py_to_r` S3 methods for Scipy sparse matrices: CSR to dgRMatrix, COO to dgTMatrix, and for all other sparse matrices, conversion via CSC/dgCMatrix.
+
+## reticulate 1.10
 
 - Output is now properly displayed when using the `reticulate` REPL with
   Windows + Python 2.7.

@@ -21,6 +21,17 @@
 #'
 #' @export
 eng_python <- function(options) {
+  options <- eng_python_validate_options(options)
+
+  # when 'eval = FALSE', we can just return the source code verbatim
+  # (skip any other per-chunk work)
+  if (identical(options$eval, FALSE)) {
+    outputs <- list()
+    if (!identical(options$echo, FALSE))
+      outputs[[1]] <- structure(list(src = options$code), class = "source")
+    wrap <- getOption("reticulate.engine.wrap", eng_python_wrap)
+    return(wrap(outputs, options))
+  }
 
   engine.path <- if (is.list(options[["engine.path"]]))
     options[["engine.path"]][["python"]]
@@ -55,20 +66,10 @@ eng_python <- function(options) {
     envir = environment()
   )
 
-  ast <- import("ast", convert = TRUE)
-
   # helper function for extracting range of code, dropping blank lines
   extract <- function(code, range) {
     snippet <- code[range[1]:range[2]]
-    paste(snippet[nzchar(snippet)], collapse = "\n")
-  }
-
-  # helper function for running a snippet of code and capturing output
-  run <- function(snippet) {
-    output <- py_capture_output(py_run_string(snippet, convert = FALSE))
-    if (nzchar(output))
-      output <- sub("\n$", "", output)
-    output
+    paste(snippet, collapse = "\n")
   }
 
   # extract the code to be run -- we'll attempt to run the code line by line
@@ -82,6 +83,7 @@ eng_python <- function(options) {
 
   # use 'ast.parse()' to parse Python code and collect line numbers, so we
   # can split source code into statements
+  ast <- import("ast", convert = TRUE)
   pasted <- paste(code, collapse = "\n")
   parsed <- tryCatch(ast$parse(pasted, "<string>"), error = identity)
   if (inherits(parsed, "error")) {
@@ -99,13 +101,19 @@ eng_python <- function(options) {
   # uniques
   lines <- unique(lines)
 
-  # convert from lines to ranges
-  starts <- lines
-  ends <- c(lines[-1] - 1, length(code))
-  ranges <- mapply(c, starts, ends, SIMPLIFY = FALSE)
+  # convert from lines to ranges (be sure to handle the zero-length case)
+  ranges <- list()
+  if (length(lines)) {
+    starts <- lines
+    ends <- c(lines[-1] - 1, length(code))
+    ranges <- mapply(c, starts, ends, SIMPLIFY = FALSE)
+  }
 
   # line index from which source should be emitted
   pending_source_index <- 1
+
+  # whether an error occurred during execution
+  had_error <- FALSE
 
   # actual outputs to be returned to knitr
   outputs <- list()
@@ -113,65 +121,69 @@ eng_python <- function(options) {
   # synchronize state R -> Python
   eng_python_synchronize_before()
 
-  for (range in ranges) {
+  # determine if we should capture errors
+  # (don't capture errors during knit)
+  capture_errors <-
+    identical(options$error, TRUE) ||
+    identical(getOption("knitr.in.progress", default = FALSE), FALSE)
+
+  for (i in seq_along(ranges)) {
+
+    # extract range
+    range <- ranges[[i]]
 
     # extract code to be run
     snippet <- extract(code, range)
 
-    # run code and capture output (leave output
-    # empty for 'eval = FALSE' case
-    captured <- ""
-    if (!identical(options$eval, FALSE)) {
-      if (is.numeric(options$eval))
-        warning("numeric 'eval' chunk option not supported by reticulate engine")
+    # save last value
+    last_value <- py_last_value()
 
-      # error=TRUE implies that errors should be captured and converted
-      # into output messages
-      if (identical(options$error, TRUE)) {
-        tryCatch(
-          captured <- run(snippet),
-          error = function(e) {
-            captured <<- conditionMessage(e)
-          }
-        )
-      } else {
-        captured <- run(snippet)
-      }
-    }
+    # run code and capture output
+    captured <- if (capture_errors)
+      tryCatch(py_compile_eval(snippet), error = identity)
+    else
+      py_compile_eval(snippet)
 
-    if (nzchar(captured) || length(context$pending_plots)) {
+    # handle matplotlib output
+    captured <- eng_python_matplotlib_handle_output(captured, last_value, i == length(ranges))
+
+    if (length(context$pending_plots) || !identical(captured, "")) {
 
       # append pending source to outputs (respecting 'echo' option)
       if (!identical(options$echo, FALSE)) {
-        if (is.numeric(options$echo))
-          warning("numeric 'echo' chunk option not supported by reticulate engine")
         extracted <- extract(code, c(pending_source_index, range[2]))
         output <- structure(list(src = extracted), class = "source")
         outputs[[length(outputs) + 1]] <- output
       }
 
-      # append captured outputs
-      if (nzchar(captured) && isTRUE(options$include))
-        outputs[[length(outputs) + 1]] <- captured
+      # append captured outputs (respecting 'include' option)
+      if (isTRUE(options$include)) {
 
-      # append captured images / figures
-      if (length(context$pending_plots)) {
-        if (isTRUE(options$include)) {
-          for (plot in context$pending_plots)
-            outputs[[length(outputs) + 1]] <- plot
-        }
+        # append captured output
+        if (!identical(captured, ""))
+          outputs[[length(outputs) + 1]] <- captured
+
+        # append captured images / figures
+        for (plot in context$pending_plots)
+          outputs[[length(outputs) + 1]] <- plot
         context$pending_plots <- list()
+
       }
 
       # update pending source range
       pending_source_index <- range[2] + 1
+
+      # bail if we had an error with 'error=FALSE'
+      if (identical(options$error, FALSE) && inherits(captured, "error")) {
+        had_error <- TRUE
+        break
+      }
+
     }
   }
 
   # if we have leftover input, add that now
-  if (!identical(options$echo, FALSE) && pending_source_index <= n) {
-    if (is.numeric(options$echo))
-      warning("numeric 'echo' chunk option not supported by reticulate engine")
+  if (!had_error && !identical(options$echo, FALSE) && pending_source_index <= n) {
     leftover <- extract(code, c(pending_source_index, n))
     outputs[[length(outputs) + 1]] <- structure(
       list(src = leftover),
@@ -201,13 +213,12 @@ eng_python_matplotlib_show <- function(plt, options) {
   path <- knitr::fig_path(options$dev, number = plot_counter())
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   plt$savefig(path, dpi = options$dpi)
+  plt$clf()
   knitr::include_graphics(path)
 }
 
-eng_python_initialize_matplotlib <- function(options,
-                                             context,
-                                             envir)
-{
+eng_python_initialize_matplotlib <- function(options, context, envir) {
+
   if (!py_module_available("matplotlib"))
     return()
 
@@ -248,9 +259,18 @@ eng_python_initialize_matplotlib <- function(options,
   show <- plt$show
   defer(plt$show <- show, envir = envir)
   plt$show <- function(...) {
+
+    # call hook to generate plot
     hook <- getOption("reticulate.engine.matplotlib.show", eng_python_matplotlib_show)
     graphic <- hook(plt, options)
+
+    # update set of pending plots
     context$pending_plots[[length(context$pending_plots) + 1]] <<- graphic
+
+    # return None to ensure no printing of output here (just inclusion of
+    # plot as a side effect)
+    r_to_py(NULL)
+
   }
 
   # set up figure dimensions
@@ -274,4 +294,53 @@ eng_python_wrap <- function(outputs, options) {
   wrap(outputs, options)
 }
 
+eng_python_validate_options <- function(options) {
 
+  # warn about unsupported numeric options and convert to TRUE
+  no_numeric <- c("eval", "echo", "warning")
+  for (option in no_numeric) {
+    if (is.numeric(options[[option]])) {
+      fmt <- "numeric '%s' chunk option not supported by reticulate engine"
+      msg <- sprintf(fmt, option)
+      warning(msg, call. = FALSE)
+      options[[option]] <- TRUE
+    }
+  }
+
+  options
+}
+
+eng_python_is_matplotlib_output <- function(value) {
+
+  # extract 'boxed' matplotlib outputs
+  if (inherits(value, "python.builtin.list") && length(value) == 1)
+    value <- value[[0]]
+
+  # TODO: are there other types we care about?
+  inherits(value, "matplotlib.artist.Artist")
+
+}
+
+eng_python_matplotlib_handle_output <- function(captured, last_value, show) {
+
+  value <- py_last_value()
+
+  # bail if no new value was produced by interpreter
+  builtins <- import_builtins(convert = TRUE)
+  if (builtins$id(last_value) == builtins$id(value))
+    return(captured)
+
+  # bail if this isn't matplotlib output
+  if (!eng_python_is_matplotlib_output(value))
+    return(captured)
+
+  # show plot if requested
+  if (show) {
+    plt <- import("matplotlib.pyplot", convert = TRUE)
+    plt$show()
+  }
+
+  # suppress textual output
+  ""
+
+}

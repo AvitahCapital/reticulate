@@ -4,13 +4,16 @@
 \alias{use_python}
 \alias{use_virtualenv}
 \alias{use_condaenv}
+\alias{use_miniconda}
 \title{Configure which version of Python to use}
 \usage{
 use_python(python, required = FALSE)
 
-use_virtualenv(virtualenv, required = FALSE)
+use_virtualenv(virtualenv = NULL, required = FALSE)
 
-use_condaenv(condaenv, conda = "auto", required = FALSE)
+use_condaenv(condaenv = NULL, conda = "auto", required = FALSE)
+
+use_miniconda(condaenv = NULL, required = FALSE)
 }
 \arguments{
 \item{python}{Path to Python binary}

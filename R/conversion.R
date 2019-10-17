@@ -20,7 +20,6 @@ py_to_r <- function(x) {
 }
 
 
-
 #' @export
 r_to_py.default <- function(x, convert = FALSE) {
   r_to_py_impl(x, convert = convert)
@@ -41,6 +40,42 @@ py_to_r.default <- function(x) {
   # return the wrapper
   wrapper
 }
+
+
+
+#' @export
+r_to_py.list <- function(x, convert = FALSE) {
+  converted <- lapply(x, r_to_py, convert = convert)
+  r_to_py_impl(converted, convert = convert)
+}
+
+#' @export
+py_to_r.python.builtin.list <- function(x) {
+
+  # NOTE: we don't disable conversion in this context
+  # as we want to ensure sub-objects inherit convert-ability
+  # see e.g. https://github.com/rstudio/keras/issues/732
+
+  # give internal code a chance to perform efficient
+  # conversion of e.g. numeric vectors and the like
+  converted <- py_ref_to_r(x)
+
+  # if we received an R list, assume that we may need
+  # to recursively convert elements
+  if (is.list(converted)) {
+    converted <- lapply(converted, function(object) {
+      if (inherits(object, "python.builtin.object"))
+        py_to_r(object)
+      else
+        object
+    })
+  }
+
+  converted
+}
+
+#' @export
+py_to_r.python.builtin.tuple <- py_to_r.python.builtin.list
 
 #' R wrapper for Python objects
 #'
@@ -107,7 +142,7 @@ r_to_py.POSIXt <- function(x, convert = FALSE) {
   if (py_module_available("numpy"))
     return(np_array(as.numeric(x) * 1E9, dtype = "datetime64[ns]"))
 
-  datetime <- import("datetime", convert = convert)
+  datetime <- import("datetime", convert = FALSE)
   datetime$datetime$fromtimestamp(as.double(x))
 }
 
@@ -125,14 +160,9 @@ py_to_r.datetime.datetime <- function(x) {
 #' @export
 r_to_py.Date <- function(x, convert = FALSE) {
 
-  # we prefer datetime64 for efficiency
-  if (py_module_available("numpy"))
-    return(r_to_py.POSIXt(as.POSIXct(x)))
-
-  # otherwise, fallback to using Python's datetime class
-  datetime <- import("datetime", convert = convert)
+  datetime <- import("datetime", convert = FALSE)
   items <- lapply(x, function(item) {
-    iso <- strsplit(format(x), "-", fixed = TRUE)[[1]]
+    iso <- strsplit(format(item), "-", fixed = TRUE)[[1]]
     year <- as.integer(iso[[1]])
     month <- as.integer(iso[[2]])
     day <- as.integer(iso[[3]])
@@ -142,7 +172,7 @@ r_to_py.Date <- function(x, convert = FALSE) {
   if (length(items) == 1)
     items[[1]]
   else
-    items
+    r_to_py_impl(items, convert)
 }
 
 #' @export
@@ -155,11 +185,15 @@ py_to_r.datetime.date <- function(x) {
 
 #' @export
 py_to_r.collections.OrderedDict <- function(x) {
-  keys <- names(x)
-  names(keys) <- keys
-  lapply(keys, function(key) {
-    x[[key]]
+  disable_conversion_scope(x)
+
+  keys <- py_dict_get_keys(x)
+  result <- lapply(seq_len(length(keys)) - 1L, function(i) {
+    py_to_r(py_dict_get_item(x, keys[i]))
   })
+
+  names(result) <- py_dict_get_keys_as_str(x)
+  result
 }
 
 
@@ -180,6 +214,10 @@ py_to_r.pandas.core.categorical.Categorical <- function(x) {
   ordered <- py_to_r(x$dtype$ordered)
   factor(values, levels = levels, ordered = ordered)
 }
+
+#' @export
+py_to_r.pandas.core.arrays.categorical.Categorical <-
+  py_to_r.pandas.core.categorical.Categorical
 
 py_object_shape <- function(object) unlist(as_r_value(object$shape))
 
@@ -387,6 +425,35 @@ dim.pandas.core.frame.DataFrame <- function(x) {
     py_object_shape(x)
 }
 
+# Scipy sparse matrices
+
+#' @export
+dim.scipy.sparse.base.spmatrix <- function(x) {
+  if (py_is_null_xptr(x) || !py_available())
+    NULL
+  else
+    py_object_shape(x)
+}
+
+#' @export
+length.scipy.sparse.base.spmatrix <- function(x) {
+  if (py_is_null_xptr(x) || !py_available())
+    0L
+  else
+    prod(py_object_shape(x))
+}
+
+#' @export
+py_to_r.scipy.sparse.base.spmatrix <- function(x) {
+  py_to_r(x$tocsc())
+}
+
+#' @importFrom methods as
+#' @export
+r_to_py.sparseMatrix <- function(x, convert = FALSE) {
+  r_to_py(as(x, "dgCMatrix"), convert = convert)
+}
+
 # Conversion between `Matrix::dgCMatrix` and `scipy.sparse.csc.csc_matrix`.
 # Scipy CSC Matrix: https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csc_matrix.html
 
@@ -402,38 +469,91 @@ r_to_py.dgCMatrix <- function(x, convert = FALSE) {
       x@i, # CSC format index array
       x@p), # CSC format index pointer array
     shape = dim(x))
-  if (any(dim(x) != as_r_value(csc_x$shape)))
+  if (any(dim(x) != dim(csc_x)))
     stop(
-      paste0(
+      paste(
         "Failed to convert: dimensions of the original Matrix::dgCMatrix ",
-        "object and the converted Scipy CSC matrix do not match"))
+        "object (", dim(x), ") and the converted Scipy CSC matrix (",
+        dim(csc_x), ") do not match", sep="", collapse=", "))
   csc_x
 }
 
-#' @importFrom Matrix sparseMatrix
+#' @importFrom methods new
 #' @export
 py_to_r.scipy.sparse.csc.csc_matrix <- function(x) {
   disable_conversion_scope(x)
-  sparseMatrix(
-    i = 1 + as_r_value(x$indices),
-    p = as_r_value(x$indptr),
+  new("dgCMatrix",
+    i = as.integer(as_r_value(x$indices)),
+    p = as.integer(as_r_value(x$indptr)),
     x = as.vector(as_r_value(x$data)),
-    dims = dim(x))
+    Dim = dim(x))
+}
+
+# Conversion between `Matrix::dgRMatrix` and `scipy.sparse.csr.csr_matrix`.
+# Scipy CSR Matrix: https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csr_matrix.html
+
+#' @export
+r_to_py.dgRMatrix <- function(x, convert = FALSE) {
+  # use default implementation if scipy is not available
+  if (!py_module_available("scipy"))
+    return(r_to_py_impl(x, convert = convert))
+  sp <- import("scipy.sparse", convert = FALSE)
+  csr_x <- sp$csr_matrix(
+    tuple(
+      x@x, # Data array of the matrix
+      x@j, # CSR format index array
+      x@p), # CSR format index pointer array
+    shape = dim(x))
+  if (any(dim(x) != dim(csr_x)))
+    stop(
+      paste(
+        "Failed to convert: dimensions of the original Matrix::dgRMatrix ",
+        "object (", dim(x), ") and the converted Scipy CSR matrix (",
+        dim(csr_x), ") do not match", sep="", collapse=", "))
+  csr_x
 }
 
 #' @export
-dim.scipy.sparse.csc.csc_matrix <- function(x) {
-  if (py_is_null_xptr(x) || !py_available())
-    NULL
-  else
-    py_object_shape(x)
+py_to_r.scipy.sparse.csr.csr_matrix <- function(x) {
+  disable_conversion_scope(x)
+  methods::new("dgRMatrix",
+      j = as.integer(as_r_value(x$indices)),
+      p = as.integer(as_r_value(x$indptr)),
+      x = as.vector(as_r_value(x$data)),
+      Dim = dim(x))
 }
+
+# Conversion between `Matrix::dgTMatrix` and `scipy.sparse.coo.coo_matrix`.
+# Scipy COO Matrix: https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.coo_matrix.html
 
 #' @export
-length.scipy.sparse.csc.csc_matrix <- function(x) {
-  if (py_is_null_xptr(x) || !py_available())
-    2L
-  else
-    Reduce(`*`, py_object_shape(x))
+r_to_py.dgTMatrix <- function(x, convert = FALSE) {
+  # use default implementation if scipy is not available
+  if (!py_module_available("scipy"))
+    return(r_to_py_impl(x, convert = convert))
+  sp <- import("scipy.sparse", convert = FALSE)
+  coo_x <- sp$coo_matrix(
+    tuple(
+      x@x, # Data array of the matrix
+      tuple(x@i,
+            x@j)), # COO format coordinate array
+    shape = dim(x))
+  if (any(dim(x) != dim(coo_x)))
+    stop(
+      paste(
+        "Failed to convert: dimensions of the original Matrix::dgTMatrix ",
+        "object (", dim(x), ") and the converted Scipy COO matrix (",
+        dim(coo_x), ") do not match", sep="", collapse=", "))
+  coo_x
 }
 
+#' @importFrom methods new
+#' @export
+py_to_r.scipy.sparse.coo.coo_matrix <- function(x) {
+  disable_conversion_scope(x)
+  new("dgTMatrix",
+      i = as.integer(as_r_value(x$row)),
+      j = as.integer(as_r_value(x$col)),
+      x = as.vector(as_r_value(x$data)),
+      Dim = dim(x))
+}

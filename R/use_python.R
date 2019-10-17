@@ -18,6 +18,27 @@ use_python <- function(python, required = FALSE) {
   if (required && !file_test("-f", python) && !file_test("-d", python))
     stop("Specified version of python '", python, "' does not exist.")
 
+  # if required == TRUE and python is already initialized then confirm that we
+  # are using the correct version
+  if (required && is_python_initialized()) {
+    
+    if (!file_same(py_config()$python, python)) {
+
+      fmt <- paste(
+        "ERROR: The requested version of Python ('%s') cannot be used, as",
+        "another version of Python ('%s') has already been initialized.",
+        "Please restart the R session if you need to attach reticulate",
+        "to a different version of Python."
+      )
+
+      msg <- sprintf(fmt, python, py_config()$python)
+      writeLines(strwrap(msg), con = stderr())
+
+      stop("failed to initialize requested version of Python")
+
+    }
+  }
+
   if (required)
     .globals$required_python_version <- python
 
@@ -27,41 +48,33 @@ use_python <- function(python, required = FALSE) {
 
 #' @rdname use_python
 #' @export
-use_virtualenv <- function(virtualenv, required = FALSE) {
+use_virtualenv <- function(virtualenv = NULL, required = FALSE) {
 
-  # prepend root virtualenv directory it doesn't exist and
-  # it's not an absolute path
-  if (!utils::file_test("-d", virtualenv) &
-      !grepl("^/|^[a-zA-Z]:/|^~", virtualenv, perl = TRUE)) {
-    workon_home <- Sys.getenv("WORKON_HOME", unset = "~/.virtualenvs")
-    virtualenv <- file.path(workon_home, virtualenv)
-  }
-
-  # compute the bin dir
-  if (is_windows())
-    python_dir <- file.path(virtualenv, "Scripts")
-  else
-    python_dir <- file.path(virtualenv, "bin")
-
+  # resolve path to virtualenv
+  virtualenv <- virtualenv_path(virtualenv)
 
   # validate it if required
-  if (required) {
-    if (!file_test("-d", python_dir) ||
-        !file_test("-f", file.path(python_dir, "activate_this.py"))) {
-      stop("Directory ", virtualenv, " is not a Python virtualenv")
-    }
-  }
+  if (required && !is_virtualenv(virtualenv))
+    stop("Directory ", virtualenv, " is not a Python virtualenv")
 
-  # set the option
-  python <- file.path(python_dir, "python")
-  if (is_windows())
-    python <- paste0(python, ".exe")
+  # get path to Python binary
+  suffix <- if (is_windows()) "Scripts/python.exe" else "bin/python"
+  python <- file.path(virtualenv, suffix)
   use_python(python, required = required)
+
 }
 
 #' @rdname use_python
 #' @export
-use_condaenv <- function(condaenv, conda = "auto", required = FALSE) {
+use_condaenv <- function(condaenv = NULL, conda = "auto", required = FALSE) {
+
+  # check for condaenv supplied by path
+  condaenv <- condaenv_resolve(condaenv)
+  if (grepl("[/\\]", condaenv, fixed = TRUE) && is_condaenv(condaenv)) {
+    python <- conda_python(condaenv)
+    use_python(python, required = required)
+    return(invisible(NULL))
+  }
 
   # list all conda environments
   conda_envs <- conda_list(conda)
@@ -72,7 +85,32 @@ use_condaenv <- function(condaenv, conda = "auto", required = FALSE) {
     stop("Unable to locate conda environment '", condaenv, "'.")
 
   if (!is.null(condaenv))
-    use_python(conda_env_python, required = required)
+    use_python(conda_env_python[[1]], required = required)
 
   invisible(NULL)
+}
+
+#' @rdname use_python
+#' @export
+use_miniconda <- function(condaenv = NULL, required = FALSE) {
+  
+  # check that Miniconda is installed
+  if (!miniconda_exists()) {
+    
+    msg <- paste(
+      "Miniconda is not installed.",
+      "Use reticulate::install_miniconda() to install Miniconda.",
+      sep = "\n"
+    )
+    stop(msg)
+    
+  }
+  
+  # use it
+  use_condaenv(
+    condaenv = condaenv,
+    conda = miniconda_conda(),
+    required = required
+  )
+  
 }

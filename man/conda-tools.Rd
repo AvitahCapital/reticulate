@@ -13,18 +13,26 @@
 \usage{
 conda_list(conda = "auto")
 
-conda_create(envname, packages = "python", conda = "auto")
+conda_create(envname = NULL, packages = "python", conda = "auto")
 
 conda_remove(envname, packages = NULL, conda = "auto")
 
-conda_install(envname, packages, forge = TRUE, pip = FALSE,
-  pip_ignore_installed = TRUE, conda = "auto")
+conda_install(
+  envname = NULL,
+  packages,
+  forge = TRUE,
+  pip = FALSE,
+  pip_ignore_installed = TRUE,
+  conda = "auto",
+  python_version = NULL,
+  ...
+)
 
 conda_binary(conda = "auto")
 
 conda_version(conda = "auto")
 
-conda_python(envname, conda = "auto")
+conda_python(envname = NULL, conda = "auto")
 }
 \arguments{
 \item{conda}{Path to conda executable (or "auto" to find conda using the
@@ -43,6 +51,8 @@ so that specific package versions can be installed even if they are downgrades. 
 option is useful for situations where you don't want a pip install to attempt an overwrite
 of a conda binary package (e.g. SciPy on Windows which is very difficult to install via
 pip due to compilation requirements).}
+
+\item{...}{Optional arguments, reserved for future expansion.}
 }
 \value{
 \code{conda_list()} returns a data frame with the names and paths to the
@@ -52,6 +62,6 @@ returns the Path to the python binary of the created environment.
 if none can be found.
 }
 \description{
-R functions for managing Python \href{https://conda.io/docs/user-guide/tasks/manage-environments.html}{condaenvironments}.
+R functions for managing Python \href{https://conda.io/docs/user-guide/tasks/manage-environments.html}{conda environments}.
 }
 \keyword{internal}

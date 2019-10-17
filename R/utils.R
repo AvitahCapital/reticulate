@@ -1,4 +1,5 @@
 
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
 traceback_enabled <- function() {
 
@@ -96,3 +97,124 @@ new_stack <- function() {
 
 }
 
+py_compile_eval <- function(code) {
+
+  builtins <- import_builtins(convert = TRUE)
+  sys <- import("sys", convert = TRUE)
+
+  # allow 'globals' and 'locals' to both point at main module, so that
+  # evaluated code updates references there as well
+  globals <- py_eval("globals()", convert = FALSE)
+  locals <- globals
+
+  # Python's command compiler complains if the only thing you submit
+  # is a comment, so detect that case first
+  if (grepl("^\\s*#", code))
+    return(TRUE)
+
+  # Python is picky about trailing whitespace, so ensure only a single
+  # newline follows the code to be submitted
+  code <- sub("\\s*$", "\n", code)
+
+  # compile and eval the code -- using 'single' here ensures that Python
+  # auto-prints statements as they are evaluated
+  compiled <- builtins$compile(code, '<string>', 'single')
+  output <- py_capture_output(builtins$eval(compiled, globals, locals))
+
+  # save the value that was produced
+  .globals$py_last_value <- py_last_value()
+
+  # py_capture_output can append an extra trailing newline, so remove it
+  if (grepl("\n{2,}$", output))
+    output <- sub("\n$", "", output)
+
+  # and return
+  invisible(output)
+}
+
+py_last_value <- function() {
+  tryCatch(
+    py_eval("_", convert = FALSE),
+    error = function(e) r_to_py(NULL)
+  )
+}
+
+python_binary_path <- function(dir) {
+
+  # check for condaenv
+  if (is_condaenv(dir)) {
+    suffix <- if (is_windows()) "python.exe" else "bin/python"
+    return(file.path(dir, suffix))
+  }
+
+  # check for virtualenv
+  if (is_virtualenv(dir)) {
+    suffix <- if (is_windows()) "Scripts/python.exe" else "bin/python"
+    return(file.path(dir, suffix))
+  }
+
+  # check for directory containing Python
+  suffix <- if (is_windows()) "python.exe" else "python"
+  if (file.exists(file.path(dir, suffix)))
+    return(file.path(dir, suffix))
+
+  stop("failed to discover Python binary associated with path '", dir, "'")
+
+}
+
+# prepends entries to the PATH (either moving or adding them as appropriate)
+# and returns the previously-set PATH
+path_prepend <- function(entries) {
+  oldpath <- Sys.getenv("PATH")
+  if (length(entries)) {
+    entries <- path.expand(entries)
+    splat <- strsplit(oldpath, split = .Platform$path.sep, fixed = TRUE)[[1]]
+    newpath <- c(entries, setdiff(splat, entries))
+    Sys.setenv(PATH = paste(newpath, collapse = .Platform$path.sep))
+  }
+  oldpath
+}
+
+# note: normally, we'd like to compare paths with normalizePath() but
+# that does not normalize for case on Windows by default so we fall back
+# to a heuristic (note: false positives are possible but we can accept
+# those in the contexts where this function is used)
+file_same <- function(lhs, rhs) {
+  
+  # check if paths are identical as-is
+  if (identical(lhs, rhs))
+    return(TRUE)
+  
+  # check if paths are identical after normalization
+  lhs <- normalizePath(lhs, winslash = "/", mustWork = FALSE)
+  rhs <- normalizePath(rhs, winslash = "/", mustWork = FALSE)
+  if (identical(lhs, rhs))
+    return(TRUE)
+  
+  # check if file info is the same
+  lhsi <- c(file.info(lhs, extra_cols = FALSE))
+  rhsi <- c(file.info(rhs, extra_cols = FALSE))
+  fields <- c("size", "isdir", "mode", "mtime", "ctime")
+  if (identical(lhsi[fields], rhsi[fields]))
+    return(TRUE)
+  
+  # checks failed; return FALSE
+  FALSE
+  
+}
+
+# normalize a path without following symlinks
+canonical_path <- function(path) {
+  
+  # on windows we normalize the whole path to avoid
+  # short path components leaking in
+  if (is_windows()) {
+    normalizePath(path, winslash = "/", mustWork = FALSE)
+  } else {
+    file.path(
+      normalizePath(dirname(path), winslash = "/", mustWork = FALSE),
+      basename(path)
+    )
+  }
+  
+}
