@@ -38,7 +38,9 @@ Imports:
     methods,
     rappdirs,
     Rcpp (>= 0.12.7),
-    utils
+    utils,
+    Matrix,
+    dplyr
 Suggests:
     callr,
     knitr,
