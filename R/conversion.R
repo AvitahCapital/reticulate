@@ -377,7 +377,7 @@ py_to_r.pandas.core.frame.DataFrame <- function(x) {
         if (!is.null(zone) && zone %in% OlsonNames())
           attr(converted, "tzone") <- zone
       }
-
+      attributes(converted)$dim <- NULL
       df[[index_name]] <- converted
     }
 
